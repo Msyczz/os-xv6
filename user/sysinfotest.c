@@ -4,13 +4,6 @@
 #include "user/user.h"
 
 
-void
-sinfo(struct sysinfo *info) {
-  if (sysinfo(info) < 0) {
-    printf("FAIL: sysinfo failed");
-    exit(1);
-  }
-}
 
 //
 // use sbrk() to count how many free physical memory pages there are.
@@ -28,7 +21,7 @@ countfree()
     }
     n += PGSIZE;
   }
-  sinfo(&info);
+  sysinfo(&info);
   if (info.freemem != 0) {
     printf("FAIL: there is no free mem, but sysinfo.freemem=%d\n",
       info.freemem);
@@ -43,7 +36,7 @@ testmem() {
   struct sysinfo info;
   uint64 n = countfree();
   
-  sinfo(&info);
+  sysinfo(&info);
 
   if (info.freemem!= n) {
     printf("FAIL: free mem %d (bytes) instead of %d\n", info.freemem, n);
@@ -55,7 +48,7 @@ testmem() {
     exit(1);
   }
 
-  sinfo(&info);
+  sysinfo(&info);
     
   if (info.freemem != n-PGSIZE) {
     printf("FAIL: free mem %d (bytes) instead of %d\n", n-PGSIZE, info.freemem);
@@ -67,7 +60,7 @@ testmem() {
     exit(1);
   }
 
-  sinfo(&info);
+  sysinfo(&info);
     
   if (info.freemem != n) {
     printf("FAIL: free mem %d (bytes) instead of %d\n", n, info.freemem);
@@ -96,7 +89,7 @@ void testproc() {
   int status;
   int pid;
   
-  sinfo(&info);
+  sysinfo(&info);
   nproc = info.nproc;
 
   pid = fork();
@@ -105,7 +98,7 @@ void testproc() {
     exit(1);
   }
   if(pid == 0){
-    sinfo(&info);
+    sysinfo(&info);
     if(info.nproc != nproc+1) {
       printf("sysinfotest: FAIL nproc is %d instead of %d\n", info.nproc, nproc+1);
       exit(1);
@@ -113,7 +106,7 @@ void testproc() {
     exit(0);
   }
   wait(&status);
-  sinfo(&info);
+  sysinfo(&info);
   if(info.nproc != nproc) {
       printf("sysinfotest: FAIL nproc is %d instead of %d\n", info.nproc, nproc);
       exit(1);
@@ -129,4 +122,5 @@ main(int argc, char *argv[])
   testproc();
   printf("sysinfotest: OK\n");
   exit(0);
+  return 0;
 }
