@@ -192,13 +192,8 @@ UPROGS=\
 	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
-	$U/_sleep\
 	$U/_zombie\
-	$U/_pingpong\
-	$U/_primes\
-	$U/_find\
-	$U/_xargs\
-
+	$U/_trace\
 
 
 
