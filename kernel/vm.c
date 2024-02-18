@@ -5,7 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "spinlock.h"
+#include "proc.h"
 /*
  * the kernel's page table.
  */
@@ -14,6 +15,9 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+
+
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -290,7 +294,16 @@ uvmfree(pagetable_t pagetable, uint64 sz)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
 }
+//检查一个地址指向的页是否是懒复制页
+int uvmcheckcowpage(uint64 va){
+    pte_t *pte;
+    struct proc *p = myproc();
 
+    return va < p ->sz //在进程内存范围内
+           &&((pte = walk(p->pagetable,va,0))!=0)
+           &&(*pte & PTE_V)//页表项存在
+           &&(*pte & PTE_COW);//页是一个懒复制页
+}
 // Given a parent process's page table, copy
 // its memory into a child's page table.
 // Copies both the page table and the
@@ -311,7 +324,15 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    if(*pte & PTE_W){
+        //清除父进程的 PTE_W 标志位，设置 PTE_COW 标志位表示是一个懒复制页（多个进程引用同一个物理页）
+        *pte = (*pte & ~PTE_W) | PTE_COW;
+    }
     flags = PTE_FLAGS(*pte);
+    //将父进程的物理页直接map到子进程（懒复制）
+    //权限设置和父进程一致
+    //（不可写+PTE_COW，或者如果父进程页本身单纯只读非COW，则子进程页同样只读且无COW标识）
+
     if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
@@ -319,6 +340,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
+    //将物理页的引用次数增加1
+    krefpage((void*)pa);
   }
   return 0;
 
@@ -326,7 +349,28 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
+//实复制一个懒复制页，并重新映射为可写
+int uvmcowcopy(uint64 va){
+    pte_t *pte;
+    struct proc *p = myproc();
 
+    if((pte = walk(p->pagetable,va,0)) == 0)
+        panic("uvmcowcopy: walk");
+    //调用kalloc.c中的kcopy_n_deref 方法，复制页
+    //（如果懒复制页的引用已经为1，则不需要重新分配和复制内存页，只需清除PTE_COW标记并标记PTE_W即可
+    uint64 pa = PTE2PA(*pte);
+    uint64 new = (uint64)kcopy_n_deref((void*)pa);
+    if(new == 0)
+        return -1;
+    //重新映射为可写，并清除PTE_COW标记
+    uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+    uvmunmap(p->pagetable,PGROUNDDOWN(va),1,0);
+    if(mappages(p->pagetable,va,1,new,flags) == -1){
+        panic("uvmcowcopy: mappages");
+    }
+    return 0;
+
+}
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
@@ -349,6 +393,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   uint64 n, va0, pa0;
 
   while(len > 0){
+      if(uvmcheckcowpage(dstva))//检查每一个被写的页是否是cow页
+          uvmcowcopy(dstva);
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
